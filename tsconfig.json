@@ -1,0 +1,13 @@
+{
+  "extends": "@tsconfig/node16/tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./lib",
+    "rootDir": "src",
+    "declaration": true,
+    "sourceMap": true,
+    "allowSyntheticDefaultImports" : true,
+    // "module": "ESNext",
+    // "moduleResolution": "Node"
+  },
+  "include": ["src"]
+}
