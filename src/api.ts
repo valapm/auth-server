@@ -4,6 +4,7 @@ import { Registration, Login, HandleRegistration, HandleLogin } from "../opaque-
 import express from "express"
 // import dotenv from "dotenv"
 import util from "util"
+import cors from "cors"
 
 // dotenv.config()
 
@@ -14,6 +15,8 @@ const registrationRequests: {
   [hexPath: string]: {
     registration: HandleRegistration
     username: string
+    wallet: string
+    salt: string
   }
 } = {}
 
@@ -27,12 +30,19 @@ const loginRequests: {
 const users: {
   [username: string]: {
     passwordFile: Uint8Array
+    wallet: string
+    salt: string
   }
 } = {}
 
 const app = express()
 
-app.use([express.json({ limit: "10mb" })])
+app.use([
+  cors({
+    origin: "*"
+  }),
+  express.json({ limit: "10mb" })
+])
 
 app.get("/test", async (req, res) => {
   return res.status(200).json({ test: "test" })
@@ -41,6 +51,8 @@ app.get("/test", async (req, res) => {
 app.post("/register", async (req, res) => {
   const registrationRequest = req.body.request
   const username = req.body.username // TODO: Email instead?
+  const wallet = req.body.wallet
+  const salt = req.body.salt
 
   if (typeof username !== "string") {
     return res.status(500).json({ message: "Must be a valid username" })
@@ -71,7 +83,9 @@ app.post("/register", async (req, res) => {
 
   registrationRequests[hexPath] = {
     registration,
-    username
+    username,
+    wallet,
+    salt
   }
 
   // console.log(registrationResponse)
@@ -97,7 +111,9 @@ app.post("/register/:key", async (req, res) => {
   // console.log(passwordFile)
   // TODO: Save passwordFile to DB
   users[registration.username] = {
-    passwordFile
+    passwordFile,
+    wallet: registration.wallet,
+    salt: registration.salt
   }
 
   delete registrationRequests[req.params.key]
@@ -160,9 +176,12 @@ app.post("/login/:key", async (req, res) => {
   console.log(sessionKey)
   // TODO: Save passwordFile to DB
 
-  delete loginRequests[req.params.key]
+  const user = users[login.username]
 
-  return res.status(200).json({ success: true }) // TODO: Return encrypted key file
+  // TODO: Encrypt wallet and salt with sessionKey before sending
+
+  delete loginRequests[req.params.key]
+  return res.status(200).json({ wallet: user.wallet, salt: user.salt }) // TODO: Return encrypted key file
 })
 
 export default app
