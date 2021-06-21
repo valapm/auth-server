@@ -1,5 +1,7 @@
-import { Registration, Login, HandleRegistration, HandleLogin } from "../opaque-wasm"
-// import { Registration, Login, HandleRegistration, HandleLogin } from "opaque-wasm"
+import { HandleRegistration, HandleLogin } from "../opaque-wasm"
+import { setupDatabase, getConnection } from "./db"
+
+import { User } from "./entities/User"
 
 import express from "express"
 // import dotenv from "dotenv"
@@ -27,161 +29,190 @@ const loginRequests: {
   }
 } = {}
 
-const users: {
-  [username: string]: {
-    passwordFile: Uint8Array
-    wallet: string
-    salt: string
-  }
-} = {}
+// const users: {
+//   [username: string]: {
+//     passwordFile: Uint8Array
+//     wallet: string
+//     salt: string
+//   }
+// } = {}
 
-const app = express()
+export async function initApp() {
+  await setupDatabase()
 
-app.use([
-  cors({
-    origin: "*"
-  }),
-  express.json({ limit: "10mb" })
-])
+  const db = await getConnection()
+  const userRepo = db.getRepository(User)
 
-app.get("/test", async (req, res) => {
-  return res.status(200).json({ test: "test" })
-})
+  const app = express()
 
-app.post("/register", async (req, res) => {
-  const registrationRequest = req.body.request
-  const username = req.body.username // TODO: Email instead?
-  const wallet = req.body.wallet
-  const salt = req.body.salt
+  app.use([
+    cors({
+      origin: "*"
+    }),
+    express.json({ limit: "10mb" })
+  ])
 
-  if (typeof username !== "string") {
-    return res.status(500).json({ message: "Must be a valid username" })
-  }
+  app.get("/test", async (req, res) => {
+    return res.status(200).json({ test: "test" })
+  })
 
-  // TODO: Check that username is not registered yet.
+  app.post("/register", async (req, res) => {
+    const registrationRequest = req.body.request
+    const username = req.body.username // TODO: Email instead?
+    const wallet = req.body.wallet
+    const salt = req.body.salt
 
-  if (!registrationRequest || !Array.isArray(registrationRequest)) {
-    console.error(req.body)
-    return res.status(500).json({ message: "Must include valid OPAQUE registration request" })
-  }
+    if (typeof username !== "string") {
+      return res.status(500).json({ message: "Must be a valid username" })
+    }
 
-  // console.log(registration_tx)
-  const regTxArray = new Uint8Array(registrationRequest)
+    const existingUser = await userRepo.findOne({ username })
+    if (existingUser) {
+      return res.status(500).json({ message: "Username already taken" })
+    }
 
-  const registration = new HandleRegistration()
+    if (!registrationRequest || !Array.isArray(registrationRequest)) {
+      console.error(req.body)
+      return res.status(500).json({ message: "Must include valid OPAQUE registration request" })
+    }
 
-  let registrationResponse
-  try {
-    registrationResponse = registration.start(regTxArray, encodedServerPrivkey)
-  } catch (e) {
-    console.error(e)
-    return res.status(500).json({ message: "Must include valid OPAQUE registration request" })
-  }
+    if (!salt) {
+      console.log(req.body)
+      return res.status(500).json({ message: "No salt value provided" })
+    }
 
-  const responseArray = Array.from(registrationResponse)
-  const hexPath = responseArray.map(n => n.toString(16)).join("")
+    // console.log(registration_tx)
+    const regTxArray = new Uint8Array(registrationRequest)
 
-  registrationRequests[hexPath] = {
-    registration,
-    username,
-    wallet,
-    salt
-  }
+    const registration = new HandleRegistration()
 
-  // console.log(registrationResponse)
+    let registrationResponse
+    try {
+      registrationResponse = registration.start(regTxArray, encodedServerPrivkey)
+    } catch (e) {
+      console.error(e)
+      return res.status(500).json({ message: "Must include valid OPAQUE registration request" })
+    }
 
-  return res.status(200).json({ key: responseArray })
-})
+    const responseArray = Array.from(registrationResponse)
+    const hexPath = responseArray.map(n => n.toString(16)).join("")
 
-app.post("/register/:key", async (req, res) => {
-  const registrationKey = req.body.key
-  const registration = registrationRequests[req.params.key]
-  // TODO: encrypted key file should be uploaded as well
+    registrationRequests[hexPath] = {
+      registration,
+      username,
+      wallet,
+      salt
+    }
 
-  if (!registration) return res.status(404).json({ message: "Registration does not exist" })
+    // console.log(registrationResponse)
 
-  let passwordFile
-  try {
-    // console.log(registrationKey)
-    passwordFile = registration.registration.finish(registrationKey)
-  } catch (e) {
-    return res.status(500).json({ message: "Invalid registration key" })
-  }
+    return res.status(200).json({ key: responseArray })
+  })
 
-  // console.log(passwordFile)
-  // TODO: Save passwordFile to DB
-  users[registration.username] = {
-    passwordFile,
-    wallet: registration.wallet,
-    salt: registration.salt
-  }
+  app.post("/register/:key", async (req, res) => {
+    const registrationKey = req.body.key
+    const registration = registrationRequests[req.params.key]
+    // TODO: encrypted key file should be uploaded as well
 
-  delete registrationRequests[req.params.key]
+    if (!registration) return res.status(404).json({ message: "Registration does not exist" })
 
-  return res.status(200).json({ success: true })
-})
+    let passwordFile
+    try {
+      // console.log(registrationKey)
+      passwordFile = registration.registration.finish(registrationKey)
+    } catch (e) {
+      return res.status(500).json({ message: "Invalid registration key" })
+    }
 
-app.post("/login", async (req, res) => {
-  const username = req.body.username
-  const credentialRequest = req.body.request
+    // console.log(passwordFile)
+    // TODO: Save passwordFile to DB
 
-  if (typeof username !== "string") {
-    return res.status(500).json({ message: "Must be a valid username" })
-  }
+    console.log(registration)
 
-  if (!credentialRequest || !Array.isArray(credentialRequest)) {
-    console.error(req.body)
-    return res.status(500).json({ message: "Must include valid OPAQUE credential request" })
-  }
-  const credentialRequestArray = new Uint8Array(credentialRequest)
+    userRepo.save({
+      username: registration.username,
+      passwordFile: Array.from(passwordFile),
+      wallet: registration.wallet,
+      salt: registration.salt
+    })
+    // users[registration.username] = {
+    //   passwordFile,
+    //   wallet: registration.wallet,
+    //   salt: registration.salt
+    // }
 
-  // TODO: Return bogus answer is user is not registered
-  // TODO: Load passwordFile from DB
-  const passwordFile = users[username].passwordFile
+    delete registrationRequests[req.params.key]
 
-  const login = new HandleLogin()
+    return res.status(200).json({ success: true })
+  })
 
-  let loginResponse
-  try {
-    loginResponse = login.start(passwordFile, credentialRequestArray, encodedServerPrivkey)
-  } catch (e) {
-    console.error(e)
-    return res.status(500).json({ message: "Must include valid OPAQUE credential request" })
-  }
+  app.post("/login", async (req, res) => {
+    const username = req.body.username
+    const credentialRequest = req.body.request
 
-  const responseArray = Array.from(loginResponse)
-  const hexPath = responseArray.map(n => n.toString(16)).join("")
+    if (typeof username !== "string") {
+      return res.status(500).json({ message: "Must be a valid username" })
+    }
 
-  loginRequests[hexPath] = {
-    login,
-    username
-  }
+    if (!credentialRequest || !Array.isArray(credentialRequest)) {
+      console.error(req.body)
+      return res.status(500).json({ message: "Must include valid OPAQUE credential request" })
+    }
+    const credentialRequestArray = new Uint8Array(credentialRequest)
 
-  return res.status(200).json({ key: responseArray })
-})
+    // TODO: Return bogus answer is user is not registered
+    const existingUser = await userRepo.findOne({ username })
+    if (!existingUser) {
+      return res.status(500).json({ message: "User not found" })
+    }
+    const passwordFile = new Uint8Array(existingUser.passwordFile)
 
-app.post("/login/:key", async (req, res) => {
-  const loginKey = req.body.key
-  const login = loginRequests[req.params.key]
+    const login = new HandleLogin()
 
-  if (!login) return res.status(404).json({ message: "Login does not exist" })
+    let loginResponse
+    try {
+      loginResponse = login.start(passwordFile, credentialRequestArray, encodedServerPrivkey)
+    } catch (e) {
+      console.error(e)
+      return res.status(500).json({ message: "Must include valid OPAQUE credential request" })
+    }
 
-  let sessionKey
-  try {
-    sessionKey = login.login.finish(loginKey)
-  } catch (e) {
-    return res.status(500).json({ message: "Invalid login key" })
-  }
+    const responseArray = Array.from(loginResponse)
+    const hexPath = responseArray.map(n => n.toString(16)).join("")
 
-  console.log(sessionKey)
-  // TODO: Save passwordFile to DB
+    loginRequests[hexPath] = {
+      login,
+      username
+    }
 
-  const user = users[login.username]
+    return res.status(200).json({ key: responseArray })
+  })
 
-  // TODO: Encrypt wallet and salt with sessionKey before sending
+  app.post("/login/:key", async (req, res) => {
+    const loginKey = req.body.key
+    const login = loginRequests[req.params.key]
 
-  delete loginRequests[req.params.key]
-  return res.status(200).json({ wallet: user.wallet, salt: user.salt }) // TODO: Return encrypted key file
-})
+    if (!login) return res.status(404).json({ message: "Login does not exist" })
 
-export default app
+    let sessionKey
+    try {
+      sessionKey = login.login.finish(loginKey)
+    } catch (e) {
+      return res.status(500).json({ message: "Invalid login key" })
+    }
+
+    console.log(sessionKey)
+
+    const user = await userRepo.findOne({ username: login.username })
+    if (!user) {
+      return res.status(500).json({ message: "User does not exist" })
+    }
+
+    // TODO: Encrypt wallet and salt with sessionKey before sending (probably not important, tls is fine)
+
+    delete loginRequests[req.params.key]
+    return res.status(200).json({ wallet: user.wallet, salt: user.salt }) // TODO: Return encrypted key file
+  })
+
+  return app
+}

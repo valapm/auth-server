@@ -6,8 +6,10 @@
     "declaration": true,
     "sourceMap": true,
     "allowSyntheticDefaultImports" : true,
+    "experimentalDecorators": true,
     // "module": "ESNext",
     // "moduleResolution": "Node"
+    "emitDecoratorMetadata": true
   },
   "include": ["src"]
 }
