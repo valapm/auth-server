@@ -4,13 +4,13 @@ import { setupDatabase, getConnection } from "./db"
 import { User } from "./entities/User"
 
 import express from "express"
-// import dotenv from "dotenv"
+import dotenv from "dotenv"
 import util from "util"
 import cors from "cors"
 
-// dotenv.config()
+dotenv.config()
 
-const server_privatekey = "c95843d9c67f7ba7f1231af10e1a88dc" // XXX: must be 32 chars long
+const server_privatekey = process.env.SERVER_PRIVATEKEY
 const encodedServerPrivkey = new util.TextEncoder().encode(server_privatekey)
 
 const registrationRequests: {
