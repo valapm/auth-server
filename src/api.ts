@@ -1,5 +1,6 @@
 import { HandleRegistration, HandleLogin } from "../opaque-wasm"
 import { setupDatabase, getConnection } from "./db"
+import { EMAIL_REGEX } from "./utils"
 
 import { User } from "./entities/User"
 
@@ -16,7 +17,7 @@ const encodedServerPrivkey = new util.TextEncoder().encode(server_privatekey)
 const registrationRequests: {
   [hexPath: string]: {
     registration: HandleRegistration
-    username: string
+    email: string
     wallet: string
     salt: string
   }
@@ -25,12 +26,12 @@ const registrationRequests: {
 const loginRequests: {
   [hexPath: string]: {
     login: HandleLogin
-    username: string
+    email: string
   }
 } = {}
 
 // const users: {
-//   [username: string]: {
+//   [email: string]: {
 //     passwordFile: Uint8Array
 //     wallet: string
 //     salt: string
@@ -58,17 +59,17 @@ export async function initApp() {
 
   app.post("/register", async (req, res) => {
     const registrationRequest = req.body.request
-    const username = req.body.username // TODO: Email instead?
+    const email = req.body.email // TODO: Email instead?
     const wallet = req.body.wallet
     const salt = req.body.salt
 
-    if (typeof username !== "string") {
-      return res.status(500).json({ message: "Must be a valid username" })
+    if (typeof email !== "string" || !EMAIL_REGEX.test(email)) {
+      return res.status(500).json({ message: "Must be a valid email" })
     }
 
-    const existingUser = await userRepo.findOne({ username })
+    const existingUser = await userRepo.findOne({ email })
     if (existingUser) {
-      return res.status(500).json({ message: "Username already taken" })
+      return res.status(500).json({ message: "Email already taken" })
     }
 
     if (!registrationRequest || !Array.isArray(registrationRequest)) {
@@ -99,7 +100,7 @@ export async function initApp() {
 
     registrationRequests[hexPath] = {
       registration,
-      username,
+      email,
       wallet,
       salt
     }
@@ -130,12 +131,12 @@ export async function initApp() {
     console.log(registration)
 
     userRepo.save({
-      username: registration.username,
+      email: registration.email,
       passwordFile: Array.from(passwordFile),
       wallet: registration.wallet,
       salt: registration.salt
     })
-    // users[registration.username] = {
+    // users[registration.email] = {
     //   passwordFile,
     //   wallet: registration.wallet,
     //   salt: registration.salt
@@ -147,11 +148,11 @@ export async function initApp() {
   })
 
   app.post("/login", async (req, res) => {
-    const username = req.body.username
+    const email = req.body.email
     const credentialRequest = req.body.request
 
-    if (typeof username !== "string") {
-      return res.status(500).json({ message: "Must be a valid username" })
+    if (typeof email !== "string" || !EMAIL_REGEX.test(email)) {
+      return res.status(500).json({ message: "Must be a valid email" })
     }
 
     if (!credentialRequest || !Array.isArray(credentialRequest)) {
@@ -161,7 +162,7 @@ export async function initApp() {
     const credentialRequestArray = new Uint8Array(credentialRequest)
 
     // TODO: Return bogus answer is user is not registered
-    const existingUser = await userRepo.findOne({ username })
+    const existingUser = await userRepo.findOne({ email })
     if (!existingUser) {
       return res.status(500).json({ message: "User not found" })
     }
@@ -182,7 +183,7 @@ export async function initApp() {
 
     loginRequests[hexPath] = {
       login,
-      username
+      email
     }
 
     return res.status(200).json({ key: responseArray })
@@ -203,7 +204,7 @@ export async function initApp() {
 
     console.log(sessionKey)
 
-    const user = await userRepo.findOne({ username: login.username })
+    const user = await userRepo.findOne({ email: login.email })
     if (!user) {
       return res.status(500).json({ message: "User does not exist" })
     }

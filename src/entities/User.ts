@@ -6,7 +6,10 @@ export class User {
   id!: number
 
   @Column()
-  username!: string
+  username!: string // TODO: Remove. Only kept for compatibility reasons
+
+  @Column()
+  email!: string
 
   @Column("int", { array: true })
   passwordFile!: number[]
