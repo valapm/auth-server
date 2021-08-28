@@ -4,7 +4,7 @@ import { Registration, Login, HandleRegistration, HandleLogin } from "../opaque-
 import { Server } from "http"
 
 const password = "SomePassword"
-const username = "SomeUser"
+const email = "someUser@example.com"
 const wallet = "SomeEncryptedSecret"
 
 test("Registration and Login", async () => {
@@ -13,7 +13,7 @@ test("Registration and Login", async () => {
   const registration = new Registration()
   const registrationRequest = registration.start(password)
 
-  const payload = { request: Array.from(registrationRequest), username, wallet }
+  const payload = { request: Array.from(registrationRequest), email, wallet }
 
   const response = await request(app).post("/register").send(payload).set("Accept", "application/json")
 
@@ -49,7 +49,7 @@ test("Registration and Login", async () => {
   const loginRequest = login.start(password)
 
   const payload3 = {
-    username,
+    email,
     request: Array.from(loginRequest)
   }
 
