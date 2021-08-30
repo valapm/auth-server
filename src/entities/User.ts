@@ -5,11 +5,16 @@ export class User {
   @PrimaryGeneratedColumn()
   id!: number
 
-  @Column()
-  username!: string // TODO: Remove. Only kept for compatibility reasons
+  @Column({
+    nullable: true
+  })
+  username?: string // TODO: Remove. Only kept for compatibility reasons
 
-  @Column()
+  @Column({ default: "" })
   email!: string
+
+  @Column({ nullable: true })
+  pubKey?: string
 
   @Column("int", { array: true })
   passwordFile!: number[]

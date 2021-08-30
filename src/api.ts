@@ -20,6 +20,7 @@ const registrationRequests: {
     email: string
     wallet: string
     salt: string
+    pubKey?: string
   }
 } = {}
 
@@ -62,6 +63,7 @@ export async function initApp() {
     const email = req.body.email // TODO: Email instead?
     const wallet = req.body.wallet
     const salt = req.body.salt
+    const pubKey = req.body.pubKey
 
     if (typeof email !== "string" || !EMAIL_REGEX.test(email)) {
       return res.status(500).json({ message: "Must be a valid email" })
@@ -102,7 +104,8 @@ export async function initApp() {
       registration,
       email,
       wallet,
-      salt
+      salt,
+      pubKey
     }
 
     // console.log(registrationResponse)
@@ -134,7 +137,8 @@ export async function initApp() {
       email: registration.email,
       passwordFile: Array.from(passwordFile),
       wallet: registration.wallet,
-      salt: registration.salt
+      salt: registration.salt,
+      pubKey: registration.pubKey
     })
     // users[registration.email] = {
     //   passwordFile,
@@ -152,6 +156,7 @@ export async function initApp() {
     const credentialRequest = req.body.request
 
     if (typeof email !== "string" || !EMAIL_REGEX.test(email)) {
+      console.log(email)
       return res.status(500).json({ message: "Must be a valid email" })
     }
 
