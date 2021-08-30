@@ -24,4 +24,10 @@ export class User {
 
   @Column()
   salt!: string
+
+  @Column()
+  activated!: boolean
+
+  @Column()
+  activationCode?: string
 }

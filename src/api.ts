@@ -1,6 +1,7 @@
 import { HandleRegistration, HandleLogin } from "../opaque-wasm"
 import { setupDatabase, getConnection } from "./db"
 import { EMAIL_REGEX } from "./utils"
+import emailService from "./mail"
 
 import { User } from "./entities/User"
 
@@ -8,6 +9,7 @@ import express from "express"
 import dotenv from "dotenv"
 import util from "util"
 import cors from "cors"
+import crypto from "crypto"
 
 dotenv.config()
 
@@ -133,13 +135,28 @@ export async function initApp() {
 
     console.log(registration)
 
-    userRepo.save({
+    const activationCode = crypto.randomBytes(64).toString("hex")
+
+    await userRepo.save({
       email: registration.email,
       passwordFile: Array.from(passwordFile),
       wallet: registration.wallet,
       salt: registration.salt,
-      pubKey: registration.pubKey
+      pubKey: registration.pubKey,
+      activated: false,
+      activationCode
     })
+
+    const data = {
+      from: process.env.REGISTRATION_EMAIL_FROM,
+      to: registration.email,
+      subject: `Your Activation Link for ${process.env.APP_NAME}`,
+      text: `Please use the following link to activate your account on ${process.env.APP_NAME}: ${process.env.DOMAIN}/api/auth/verification/verify-account/${activationCode}`,
+      html: `<p>Please use the following link to activate your account on ${process.env.APP_NAME}: <strong><a href="${process.env.DOMAIN}/api/auth/verification/verify-account/${activationCode}" target="_blank">Verify Email</a></strong></p>`
+    }
+
+    await emailService.sendMail(data)
+
     // users[registration.email] = {
     //   passwordFile,
     //   wallet: registration.wallet,
@@ -149,6 +166,26 @@ export async function initApp() {
     delete registrationRequests[req.params.key]
 
     return res.status(200).json({ success: true })
+  })
+
+  app.get("/verification/:activationCode", async (req, res) => {
+    try {
+      const user = await userRepo.findOne({ activationCode: req.params.activationCode })
+
+      if (!user) {
+        res.sendStatus(401)
+      } else {
+        user.activated = true
+        user.activationCode = undefined
+
+        await userRepo.save(user)
+
+        res.send("Email verified.")
+      }
+    } catch (err) {
+      console.log("Error on email verification: ", err)
+      res.sendStatus(500)
+    }
   })
 
   app.post("/login", async (req, res) => {
