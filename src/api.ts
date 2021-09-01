@@ -190,6 +190,38 @@ export async function initApp() {
     }
   })
 
+  app.post("/resend-email", async (req, res) => {
+    try {
+      const user = await userRepo.findOne({ email: req.body.email })
+
+      if (!user || user.activated) {
+        res.json({ success: false })
+      } else {
+        console.log("Generating new activate code for " + req.body.email)
+
+        const activationCode = crypto.randomBytes(64).toString("hex")
+
+        user.activationCode = activationCode
+        await userRepo.save(user)
+
+        const data = {
+          from: process.env.REGISTRATION_EMAIL_FROM,
+          to: user.email,
+          subject: `Your Activation Link for ${process.env.APP_NAME}`,
+          text: `Please use the following link to activate your account on ${process.env.APP_NAME}: ${process.env.DOMAIN}/verification/${activationCode}`,
+          html: `<p>Please use the following link to activate your account on ${process.env.APP_NAME}: <strong><a href="${process.env.DOMAIN}/verification/${activationCode}" target="_blank">Verify Email</a></strong></p>`
+        }
+
+        await emailService.sendMail(data)
+
+        res.json({ success: true })
+      }
+    } catch (err) {
+      console.log("Error on /api/auth/get-activation-email: ", err)
+      res.json({ success: false })
+    }
+  })
+
   app.post("/login", async (req, res) => {
     const email = req.body.email
     const credentialRequest = req.body.request
@@ -256,7 +288,7 @@ export async function initApp() {
     // TODO: Encrypt wallet and salt with sessionKey before sending (probably not important, tls is fine)
 
     delete loginRequests[req.params.key]
-    return res.status(200).json({ wallet: user.wallet, salt: user.salt }) // TODO: Return encrypted key file
+    return res.status(200).json({ wallet: user.wallet, salt: user.salt, verified: user.activated }) // TODO: Return encrypted key file
   })
 
   return app
