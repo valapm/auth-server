@@ -25,9 +25,13 @@ export class User {
   @Column()
   salt!: string
 
-  @Column()
+  @Column({
+    default: false
+  })
   activated!: boolean
 
-  @Column()
-  activationCode?: string
+  @Column("text", {
+    nullable: true
+  })
+  activationCode?: string | null
 }

@@ -151,8 +151,8 @@ export async function initApp() {
       from: process.env.REGISTRATION_EMAIL_FROM,
       to: registration.email,
       subject: `Your Activation Link for ${process.env.APP_NAME}`,
-      text: `Please use the following link to activate your account on ${process.env.APP_NAME}: ${process.env.DOMAIN}/api/auth/verification/verify-account/${activationCode}`,
-      html: `<p>Please use the following link to activate your account on ${process.env.APP_NAME}: <strong><a href="${process.env.DOMAIN}/api/auth/verification/verify-account/${activationCode}" target="_blank">Verify Email</a></strong></p>`
+      text: `Please use the following link to activate your account on ${process.env.APP_NAME}: ${process.env.DOMAIN}/verification/${activationCode}`,
+      html: `<p>Please use the following link to activate your account on ${process.env.APP_NAME}: <strong><a href="${process.env.DOMAIN}/verification/${activationCode}" target="_blank">Verify Email</a></strong></p>`
     }
 
     await emailService.sendMail(data)
@@ -176,9 +176,11 @@ export async function initApp() {
         res.sendStatus(401)
       } else {
         user.activated = true
-        user.activationCode = undefined
+        user.activationCode = null
 
         await userRepo.save(user)
+
+        console.log("Verified email " + user.email)
 
         res.send("Email verified.")
       }
