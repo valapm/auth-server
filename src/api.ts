@@ -1,7 +1,8 @@
 import { HandleRegistration, HandleLogin } from "../opaque-wasm"
 import { setupDatabase, getConnection } from "./db"
 import { EMAIL_REGEX } from "./utils"
-import emailService from "./mail"
+import { sendVerificationEmail } from "./mail"
+import { BadRequest, Unauthorized, Forbidden, NotFound } from "./errors"
 
 import { User } from "./entities/User"
 
@@ -33,13 +34,36 @@ const loginRequests: {
   }
 } = {}
 
-// const users: {
-//   [email: string]: {
-//     passwordFile: Uint8Array
-//     wallet: string
-//     salt: string
-//   }
-// } = {}
+function getResponse(func: (req: express.Request) => any): express.RequestHandler {
+  return async (req: express.Request, res: express.Response) => {
+    let result
+    try {
+      result = await func(req)
+    } catch (error) {
+      if (!error.statusCode || error.statusCode === 500) {
+        console.error(error)
+        return res.status(500).send({
+          error: "Internal Server Error"
+        })
+      }
+
+      return res.status(error.statusCode).send({
+        error: error.message
+      })
+    }
+
+    return res.status(200).send(result)
+  }
+}
+
+function getRegistrationError(user?: User): void | Error {
+  if (process.env.WAITLIST && !user) {
+    return new Forbidden("Email not on waitlist")
+  }
+
+  if (user && user.waitlist) return new Forbidden("Registration not open for this email")
+  if (user && user.wallet) return new BadRequest("Email already registered")
+}
 
 export async function initApp() {
   await setupDatabase()
@@ -60,120 +84,120 @@ export async function initApp() {
     return res.status(200).json({ test: "test" })
   })
 
-  app.post("/register", async (req, res) => {
-    const registrationRequest = req.body.request
-    const email = req.body.email // TODO: Email instead?
-    const wallet = req.body.wallet
-    const salt = req.body.salt
-    const pubKey = req.body.pubKey
+  app.post(
+    "/register",
+    getResponse(async req => {
+      const { request: registrationRequest, email, wallet, salt, pubKey } = req.body
 
-    if (typeof email !== "string" || !EMAIL_REGEX.test(email)) {
-      return res.status(500).json({ message: "Must be a valid email" })
-    }
+      if (typeof email !== "string" || !EMAIL_REGEX.test(email)) {
+        throw new BadRequest("Must be a valid email")
+      }
 
-    const existingUser = await userRepo.findOne({ email })
-    if (existingUser) {
-      return res.status(500).json({ message: "Email already taken" })
-    }
+      const existingUser = await userRepo.findOne({ email })
+      const registrationError = getRegistrationError(existingUser)
+      if (registrationError) throw registrationError
 
-    if (!registrationRequest || !Array.isArray(registrationRequest)) {
-      console.error(req.body)
-      return res.status(500).json({ message: "Must include valid OPAQUE registration request" })
-    }
+      if (!registrationRequest || !Array.isArray(registrationRequest)) {
+        throw new BadRequest("Must include valid OPAQUE registration request")
+      }
 
-    if (!salt) {
-      console.log(req.body)
-      return res.status(500).json({ message: "No salt value provided" })
-    }
+      if (!salt) {
+        throw new BadRequest("No salt value provided")
+      }
 
-    // console.log(registration_tx)
-    const regTxArray = new Uint8Array(registrationRequest)
+      const regTxArray = new Uint8Array(registrationRequest)
 
-    const registration = new HandleRegistration()
+      const registration = new HandleRegistration()
 
-    let registrationResponse
-    try {
-      registrationResponse = registration.start(regTxArray, encodedServerPrivkey)
-    } catch (e) {
-      console.error(e)
-      return res.status(500).json({ message: "Must include valid OPAQUE registration request" })
-    }
+      let registrationResponse
+      try {
+        registrationResponse = registration.start(regTxArray, encodedServerPrivkey)
+      } catch (e) {
+        console.error("Failed OPAQUE registration in first step")
+        console.error(e)
+        throw new BadRequest("Must include valid OPAQUE registration request")
+      }
 
-    const responseArray = Array.from(registrationResponse)
-    const hexPath = responseArray.map(n => n.toString(16)).join("")
+      const responseArray = Array.from(registrationResponse)
+      const hexPath = responseArray.map(n => n.toString(16)).join("")
 
-    registrationRequests[hexPath] = {
-      registration,
-      email,
-      wallet,
-      salt,
-      pubKey
-    }
+      registrationRequests[hexPath] = {
+        registration,
+        email,
+        wallet,
+        salt,
+        pubKey
+      }
 
-    // console.log(registrationResponse)
-
-    return res.status(200).json({ key: responseArray })
-  })
-
-  app.post("/register/:key", async (req, res) => {
-    const registrationKey = req.body.key
-    const registration = registrationRequests[req.params.key]
-    // TODO: encrypted key file should be uploaded as well
-
-    if (!registration) return res.status(404).json({ message: "Registration does not exist" })
-
-    let passwordFile
-    try {
-      // console.log(registrationKey)
-      passwordFile = registration.registration.finish(registrationKey)
-    } catch (e) {
-      return res.status(500).json({ message: "Invalid registration key" })
-    }
-
-    // console.log(passwordFile)
-    // TODO: Save passwordFile to DB
-
-    console.log(registration)
-
-    const activationCode = crypto.randomBytes(64).toString("hex")
-
-    await userRepo.save({
-      email: registration.email,
-      passwordFile: Array.from(passwordFile),
-      wallet: registration.wallet,
-      salt: registration.salt,
-      pubKey: registration.pubKey,
-      activated: false,
-      activationCode
+      return { key: responseArray }
     })
+  )
 
-    const data = {
-      from: process.env.REGISTRATION_EMAIL_FROM,
-      to: registration.email,
-      subject: `Your Activation Link for ${process.env.APP_NAME}`,
-      text: `Please use the following link to activate your account on ${process.env.APP_NAME}: ${process.env.DOMAIN}/verification/${activationCode}`,
-      html: `<p>Please use the following link to activate your account on ${process.env.APP_NAME}: <strong><a href="${process.env.DOMAIN}/verification/${activationCode}" target="_blank">Verify Email</a></strong></p>`
-    }
+  app.post(
+    "/register/:key",
+    getResponse(async req => {
+      const registrationKey = req.body.key
+      const registration = registrationRequests[req.params.key]
+      // TODO: encrypted key file should be uploaded as well
 
-    await emailService.sendMail(data)
+      if (!registration) throw new NotFound("Registration does not exist")
 
-    // users[registration.email] = {
-    //   passwordFile,
-    //   wallet: registration.wallet,
-    //   salt: registration.salt
-    // }
+      let passwordFile
+      try {
+        passwordFile = registration.registration.finish(registrationKey)
+      } catch (e) {
+        console.error("Failed OPAQUE registration in second step")
+        console.error(e)
+        throw new BadRequest("Invalid registration key")
+      }
 
-    delete registrationRequests[req.params.key]
+      // console.log(passwordFile)
+      // TODO: Save passwordFile to DB
 
-    return res.status(200).json({ success: true })
-  })
+      console.log(registration)
 
-  app.get("/verification/:activationCode", async (req, res) => {
-    try {
+      const activationCode = crypto.randomBytes(64).toString("hex")
+
+      const existingUser = await userRepo.findOne({ email: registration.email })
+      const registrationError = getRegistrationError(existingUser)
+      if (registrationError) throw registrationError
+
+      const userSave = existingUser ? existingUser : new User()
+
+      if (!existingUser) {
+        userSave.email = registration.email
+        userSave.activated = false
+        userSave.pubKey = registration.pubKey
+      }
+
+      userSave.passwordFile = Array.from(passwordFile)
+      userSave.wallet = registration.wallet
+      userSave.salt = registration.salt
+      userSave.activationCode = activationCode
+
+      await sendVerificationEmail(registration.email, activationCode)
+
+      delete registrationRequests[req.params.key]
+
+      userSave
+        .syncMauticContact()
+        .then(res => console.log("Sucessfully created mautic user"))
+        .catch(error => {
+          console.error("Failed to create mautic user")
+          console.error(error)
+        })
+
+      return { success: true }
+    })
+  )
+
+  app.get(
+    "/verification/:activationCode",
+    getResponse(async req => {
       const user = await userRepo.findOne({ activationCode: req.params.activationCode })
 
       if (!user) {
-        res.sendStatus(401)
+        throw new NotFound("Verification code not found")
       } else {
         user.activated = true
         user.activationCode = null
@@ -182,114 +206,134 @@ export async function initApp() {
 
         console.log("Verified email " + user.email)
 
-        res.send("Email verified.")
+        return "Email verified"
       }
-    } catch (err) {
-      console.log("Error on email verification: ", err)
-      res.sendStatus(500)
-    }
-  })
+    })
+  )
 
-  app.post("/resend-email", async (req, res) => {
-    try {
+  app.post(
+    "/resend-email",
+    getResponse(async req => {
       const user = await userRepo.findOne({ email: req.body.email })
 
-      if (!user || user.activated) {
-        res.json({ success: false })
-      } else {
-        console.log("Generating new activate code for " + req.body.email)
+      if (!user) throw new NotFound("No registered not found")
+      if (user.activated) throw new BadRequest("Email already verified")
 
-        const activationCode = crypto.randomBytes(64).toString("hex")
+      console.log("Generating new activate code for " + req.body.email)
 
-        user.activationCode = activationCode
-        await userRepo.save(user)
+      const activationCode = crypto.randomBytes(64).toString("hex")
 
-        const data = {
-          from: process.env.REGISTRATION_EMAIL_FROM,
-          to: user.email,
-          subject: `Your Activation Link for ${process.env.APP_NAME}`,
-          text: `Please use the following link to activate your account on ${process.env.APP_NAME}: ${process.env.DOMAIN}/verification/${activationCode}`,
-          html: `<p>Please use the following link to activate your account on ${process.env.APP_NAME}: <strong><a href="${process.env.DOMAIN}/verification/${activationCode}" target="_blank">Verify Email</a></strong></p>`
-        }
+      user.activationCode = activationCode
+      await userRepo.save(user)
 
-        await emailService.sendMail(data)
+      await sendVerificationEmail(user.email, activationCode)
 
-        res.json({ success: true })
+      return "Verification email send to " + req.body.email
+    })
+  )
+
+  app.post(
+    "/login",
+    getResponse(async req => {
+      const email = req.body.email
+      const credentialRequest = req.body.request
+
+      if (typeof email !== "string" || !EMAIL_REGEX.test(email)) {
+        console.log(email)
+        throw new BadRequest("Must be a valid email")
       }
-    } catch (err) {
-      console.log("Error on /api/auth/get-activation-email: ", err)
-      res.json({ success: false })
-    }
-  })
 
-  app.post("/login", async (req, res) => {
-    const email = req.body.email
-    const credentialRequest = req.body.request
+      if (!credentialRequest || !Array.isArray(credentialRequest)) {
+        throw new BadRequest("Must include valid OPAQUE credential request")
+      }
+      const credentialRequestArray = new Uint8Array(credentialRequest)
 
-    if (typeof email !== "string" || !EMAIL_REGEX.test(email)) {
-      console.log(email)
-      return res.status(500).json({ message: "Must be a valid email" })
-    }
+      // TODO: Return bogus answer is user is not registered
+      const existingUser = await userRepo.findOne({ email })
+      if (!existingUser || !existingUser.passwordFile) {
+        throw new NotFound("User not found")
+      }
+      const passwordFile = new Uint8Array(existingUser.passwordFile)
 
-    if (!credentialRequest || !Array.isArray(credentialRequest)) {
-      console.error(req.body)
-      return res.status(500).json({ message: "Must include valid OPAQUE credential request" })
-    }
-    const credentialRequestArray = new Uint8Array(credentialRequest)
+      const login = new HandleLogin()
 
-    // TODO: Return bogus answer is user is not registered
-    const existingUser = await userRepo.findOne({ email })
-    if (!existingUser) {
-      return res.status(500).json({ message: "User not found" })
-    }
-    const passwordFile = new Uint8Array(existingUser.passwordFile)
+      let loginResponse
+      try {
+        loginResponse = login.start(passwordFile, credentialRequestArray, encodedServerPrivkey)
+      } catch (e) {
+        console.error("Failed OPAQUE login in first step")
+        console.error(e)
+        throw new BadRequest("Must include valid OPAQUE credential request")
+      }
 
-    const login = new HandleLogin()
+      const responseArray = Array.from(loginResponse)
+      const hexPath = responseArray.map(n => n.toString(16)).join("")
 
-    let loginResponse
-    try {
-      loginResponse = login.start(passwordFile, credentialRequestArray, encodedServerPrivkey)
-    } catch (e) {
-      console.error(e)
-      return res.status(500).json({ message: "Must include valid OPAQUE credential request" })
-    }
+      loginRequests[hexPath] = {
+        login,
+        email
+      }
 
-    const responseArray = Array.from(loginResponse)
-    const hexPath = responseArray.map(n => n.toString(16)).join("")
+      return { key: responseArray }
+    })
+  )
 
-    loginRequests[hexPath] = {
-      login,
-      email
-    }
+  app.post(
+    "/login/:key",
+    getResponse(async req => {
+      const loginKey = req.body.key
+      const login = loginRequests[req.params.key]
 
-    return res.status(200).json({ key: responseArray })
-  })
+      if (!login) throw new NotFound("Login does not exist")
 
-  app.post("/login/:key", async (req, res) => {
-    const loginKey = req.body.key
-    const login = loginRequests[req.params.key]
+      let sessionKey
+      try {
+        sessionKey = login.login.finish(loginKey)
+      } catch (e) {
+        console.error("Failed OPAQUE login in second step")
+        console.error(e)
+        throw new BadRequest("Invalid login key")
+      }
 
-    if (!login) return res.status(404).json({ message: "Login does not exist" })
+      console.log(sessionKey)
 
-    let sessionKey
-    try {
-      sessionKey = login.login.finish(loginKey)
-    } catch (e) {
-      return res.status(500).json({ message: "Invalid login key" })
-    }
+      const user = await userRepo.findOne({ email: login.email })
+      if (!user) {
+        throw new NotFound("User does not exist")
+      }
 
-    console.log(sessionKey)
+      // TODO: Encrypt wallet and salt with sessionKey before sending (probably not important, tls is fine)
 
-    const user = await userRepo.findOne({ email: login.email })
-    if (!user) {
-      return res.status(500).json({ message: "User does not exist" })
-    }
+      delete loginRequests[req.params.key]
+      return { wallet: user.wallet, salt: user.salt, verified: user.activated } // TODO: Return encrypted key file
+    })
+  )
 
-    // TODO: Encrypt wallet and salt with sessionKey before sending (probably not important, tls is fine)
+  app.post(
+    "/waitlist",
+    getResponse(async req => {
+      const email = req.body.email
 
-    delete loginRequests[req.params.key]
-    return res.status(200).json({ wallet: user.wallet, salt: user.salt, verified: user.activated }) // TODO: Return encrypted key file
-  })
+      if (!email) {
+        throw new BadRequest("No email supplied")
+      }
+
+      const existingUser = await userRepo.findOne({ email })
+
+      if (existingUser) {
+        throw new BadRequest("User already registered")
+      }
+
+      const userSave = await userRepo.save({
+        email,
+        waitlist: true
+      })
+
+      await userRepo.save(userSave)
+    })
+  )
 
   return app
 }
+
+// TODO: Add cron job that syncs contacts to mautic
