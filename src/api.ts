@@ -1,7 +1,8 @@
 import { HandleRegistration, HandleLogin } from "../opaque-wasm"
-import { setupDatabase, getConnection } from "./db"
+import { getConnection } from "./db"
 import { EMAIL_REGEX } from "./utils"
 import { sendVerificationEmail } from "./mail"
+import { Connection } from "typeorm"
 import { BadRequest, Unauthorized, Forbidden, NotFound } from "./errors"
 
 import { User } from "./entities/User"
@@ -65,10 +66,7 @@ function getRegistrationError(user?: User): void | Error {
   if (user && user.wallet) return new BadRequest("Email already registered")
 }
 
-export async function initApp() {
-  await setupDatabase()
-
-  const db = await getConnection()
+export async function initApp(db: Connection) {
   const userRepo = db.getRepository(User)
 
   const app = express()
@@ -313,6 +311,7 @@ export async function initApp() {
     "/waitlist",
     getResponse(async req => {
       const email = req.body.email
+      console.log(email)
 
       if (!email) {
         throw new BadRequest("No email supplied")
@@ -330,6 +329,15 @@ export async function initApp() {
       })
 
       await userRepo.save(userSave)
+
+      // Sync user to mautic after returning response
+      userSave
+        .syncMauticContact()
+        .then(id => {
+          console.log(`New waitlist user ${userSave.email} synced to Mautic`)
+          userRepo.save(userSave)
+        })
+        .catch(err => console.error(err))
     })
   )
 
