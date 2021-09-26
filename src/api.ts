@@ -4,6 +4,7 @@ import { EMAIL_REGEX } from "./utils"
 import { sendVerificationEmail } from "./mail"
 import { Connection } from "typeorm"
 import { BadRequest, Unauthorized, Forbidden, NotFound } from "./errors"
+import { syncMauticContact } from "./cron"
 
 import { User } from "./entities/User"
 
@@ -177,8 +178,7 @@ export async function initApp(db: Connection) {
 
       delete registrationRequests[req.params.key]
 
-      userSave
-        .syncMauticContact()
+      syncMauticContact(userSave)
         .then(res => console.log("Sucessfully created mautic user"))
         .catch(error => {
           console.error("Failed to create mautic user")
@@ -331,9 +331,9 @@ export async function initApp(db: Connection) {
       await userRepo.save(userSave)
 
       // Sync user to mautic after returning response
-      userSave
-        .syncMauticContact()
-        .then(id => {
+
+      syncMauticContact(userSave)
+        .then(user => {
           console.log(`New waitlist user ${userSave.email} synced to Mautic`)
           userRepo.save(userSave)
         })
