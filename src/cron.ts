@@ -1,7 +1,7 @@
 import { getConnection } from "./db"
 import { User } from "./entities/User"
 import dotenv from "dotenv"
-import { Connection } from "typeorm"
+import { Connection, IsNull, Not } from "typeorm"
 import axios from "axios"
 
 dotenv.config()
@@ -10,7 +10,7 @@ export async function syncMauticContacts(db: Connection) {
   console.log("Starting contact sync cron job")
   const userRepo = db.getRepository(User)
 
-  const missingContacts = await userRepo.find({ syncedWithMautic: false })
+  const missingContacts = await userRepo.find({ syncedWithMautic: false, email: Not(IsNull()) })
 
   if (missingContacts.length) {
     console.log(`Found ${missingContacts.length} unsynced contacts`)
@@ -36,7 +36,7 @@ export async function syncMauticContacts(db: Connection) {
 export async function syncMauticContact(user: User) {
   if (!user.email) {
     console.error(`User ${user.username} has no email, skipping`)
-    return
+    return user
   }
 
   console.log("Syncing " + user.email)

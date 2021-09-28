@@ -12,8 +12,8 @@ export class User {
   })
   username?: string // TODO: Remove. Only kept for compatibility reasons
 
-  @Column()
-  email!: string
+  @Column({ nullable: true, unique: true })
+  email?: string
 
   @Column({ nullable: true })
   pubKey?: string

@@ -214,7 +214,7 @@ export async function initApp(db: Connection) {
     getResponse(async req => {
       const user = await userRepo.findOne({ email: req.body.email })
 
-      if (!user) throw new NotFound("No registered not found")
+      if (!user) throw new NotFound("No registered user with that email found")
       if (user.activated) throw new BadRequest("Email already verified")
 
       console.log("Generating new activate code for " + req.body.email)
@@ -224,7 +224,7 @@ export async function initApp(db: Connection) {
       user.activationCode = activationCode
       await userRepo.save(user)
 
-      await sendVerificationEmail(user.email, activationCode)
+      await sendVerificationEmail(user.email as string, activationCode)
 
       return "Verification email send to " + req.body.email
     })
@@ -338,6 +338,8 @@ export async function initApp(db: Connection) {
           userRepo.save(userSave)
         })
         .catch(err => console.error(err))
+
+      return { success: true }
     })
   )
 
