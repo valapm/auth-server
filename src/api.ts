@@ -174,6 +174,7 @@ export async function initApp(db: Connection) {
       userSave.salt = registration.salt
       userSave.activationCode = activationCode
 
+      await userRepo.save(userSave)
       await sendVerificationEmail(registration.email, activationCode)
 
       delete registrationRequests[req.params.key]
