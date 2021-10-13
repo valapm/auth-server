@@ -37,3 +37,13 @@ export class NotFound extends Error {
     this.statusCode = 404
   }
 }
+
+export class Internal extends Error {
+  statusCode: number
+
+  constructor(message: string) {
+    super(message)
+    this.name = "InternalServerError"
+    this.statusCode = 500
+  }
+}

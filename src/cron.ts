@@ -95,6 +95,31 @@ export async function syncMauticContact(user: User) {
     throw new Error("Failed to save contact segment")
   }
 
+  // Add to selected segment if remove from waitlist
+  if (segmentAction === "remove") {
+    if (!process.env.SELECTED_SEGMENT_ID) {
+      console.error("Missing mautic selected segment id. Skipping..")
+      return user.mauticUserId
+    }
+
+    const res3 = await axios.post(
+      "http://" +
+        process.env.MAUTIC_HOST +
+        `/api/segments/${process.env.SELECTED_SEGMENT_ID}/contact/${user.mauticUserId}/add`,
+      {},
+      {
+        headers: {
+          Authorization: auth
+        }
+      }
+    )
+
+    if (!(res3.data.success === 1)) {
+      console.error(res3.data)
+      throw new Error("Failed to save contact to selected segment")
+    }
+  }
+
   user.syncedWithMautic = true
   return user
 }

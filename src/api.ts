@@ -345,5 +345,3 @@ export async function initApp(db: Connection) {
 
   return app
 }
-
-// TODO: Add cron job that syncs contacts to mautic
