@@ -59,11 +59,14 @@ function getResponse(func: (req: express.Request) => any): express.RequestHandle
 }
 
 function getRegistrationError(user?: User): void | Error {
-  if (process.env.WAITLIST && !user) {
-    return new Forbidden("Email not on waitlist")
+  if (process.env.WAITLIST === "true") {
+    if (!user) {
+      return new Forbidden("Email not on waitlist")
+    } else if (user.waitlist) {
+      return new Forbidden("Registration not open for this email")
+    }
   }
 
-  if (user && user.waitlist) return new Forbidden("Registration not open for this email")
   if (user && user.wallet) return new BadRequest("Email already registered")
 }
 
