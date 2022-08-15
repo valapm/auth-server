@@ -1,7 +1,7 @@
 import { HandleRegistration, HandleLogin } from "../opaque-wasm"
 import { getConnection } from "./db"
 import { EMAIL_REGEX } from "./utils"
-import { sendVerificationEmail } from "./mail"
+import { sendVerificationEmail, sendRecoveryEmail } from "./mail"
 import { Connection } from "typeorm"
 import { BadRequest, Unauthorized, Forbidden, NotFound } from "./errors"
 import { syncMauticContact } from "./cron"
@@ -26,6 +26,7 @@ const registrationRequests: {
     wallet: string
     salt: string
     pubKey?: string
+    reset?: boolean
   }
 } = {}
 
@@ -66,8 +67,6 @@ function getRegistrationError(user?: User): void | Error {
       return new Forbidden("Registration not open for this email")
     }
   }
-
-  if (user && user.wallet) return new BadRequest("Email already registered")
 }
 
 export async function initApp(db: Connection) {
@@ -158,27 +157,30 @@ export async function initApp(db: Connection) {
 
       console.log(registration)
 
-      const activationCode = crypto.randomBytes(64).toString("hex")
-
       const existingUser = await userRepo.findOne({ email: registration.email })
       const registrationError = getRegistrationError(existingUser)
       if (registrationError) throw registrationError
 
-      const userSave = existingUser ? existingUser : new User()
+      if (existingUser && existingUser.wallet && !registration.reset) return new BadRequest("Email already registered")
 
-      if (!existingUser) {
-        userSave.email = registration.email
-        userSave.activated = false
-        userSave.pubKey = registration.pubKey
-      }
+      const userSave = existingUser ? existingUser : new User()
 
       userSave.passwordFile = Array.from(passwordFile)
       userSave.wallet = registration.wallet
       userSave.salt = registration.salt
-      userSave.activationCode = activationCode
+
+      if (!existingUser) {
+        const activationCode = crypto.randomBytes(64).toString("hex")
+
+        userSave.email = registration.email
+        userSave.activated = false
+        userSave.pubKey = registration.pubKey
+        userSave.activationCode = activationCode
+
+        await sendVerificationEmail(registration.email, activationCode)
+      }
 
       await userRepo.save(userSave)
-      await sendVerificationEmail(registration.email, activationCode)
 
       delete registrationRequests[req.params.key]
 
@@ -190,6 +192,83 @@ export async function initApp(db: Connection) {
         })
 
       return { success: true }
+    })
+  )
+
+  app.post(
+    "/recover",
+    getResponse(async req => {
+      const { request: email } = req.body
+
+      if (typeof email !== "string" || !EMAIL_REGEX.test(email)) {
+        throw new BadRequest("Must be a valid email")
+      }
+
+      const existingUser = await userRepo.findOne({ email })
+
+      if (existingUser) {
+        const recoveryCode = crypto.randomBytes(64).toString("hex")
+        existingUser.recoveryCode = recoveryCode
+        await userRepo.save(existingUser)
+        await sendRecoveryEmail(existingUser.email as string, recoveryCode)
+      }
+
+      // Return this in all cases to prevent email lookup
+      return { success: true, sentRecoveryEmail: true }
+    })
+  )
+
+  app.post(
+    "/recover/:recoveryCode",
+    getResponse(async req => {
+      const { request: registrationRequest, email, wallet, salt, pubKey } = req.body
+
+      if (typeof email !== "string" || !EMAIL_REGEX.test(email)) {
+        throw new BadRequest("Must be a valid email")
+      }
+
+      const existingUser = await userRepo.findOne({ recoveryCode: req.params.recoveryCode })
+      const registrationError = getRegistrationError(existingUser)
+      if (registrationError) throw registrationError
+
+      if (!existingUser) {
+        return new BadRequest("Email not found")
+      }
+
+      if (!registrationRequest || !Array.isArray(registrationRequest)) {
+        throw new BadRequest("Must include valid OPAQUE registration request")
+      }
+
+      if (!salt) {
+        throw new BadRequest("No salt value provided")
+      }
+
+      const regTxArray = new Uint8Array(registrationRequest)
+
+      const registration = new HandleRegistration()
+
+      let registrationResponse
+      try {
+        registrationResponse = registration.start(regTxArray, encodedServerPrivkey)
+      } catch (e) {
+        console.error("Failed OPAQUE registration in first step")
+        console.error(e)
+        throw new BadRequest("Must include valid OPAQUE registration request")
+      }
+
+      const responseArray = Array.from(registrationResponse)
+      const hexPath = responseArray.map(n => n.toString(16)).join("")
+
+      registrationRequests[hexPath] = {
+        registration,
+        email,
+        wallet,
+        salt,
+        pubKey,
+        reset: true
+      }
+
+      return { key: responseArray }
     })
   )
 

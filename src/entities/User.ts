@@ -37,6 +37,11 @@ export class User {
   })
   activationCode?: string | null
 
+  @Column("text", {
+    nullable: true
+  })
+  recoveryCode?: string | null
+
   // Users on the waitlist can not register an account yet.
   @Column({ default: true })
   waitlist!: boolean
