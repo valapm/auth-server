@@ -1,5 +1,5 @@
 import { HandleRegistration, HandleLogin } from "../opaque-wasm"
-import { Connection } from "typeorm"
+import { DataSource } from "typeorm"
 import { BadRequest, Unauthorized, Forbidden, NotFound } from "./errors"
 
 import { User } from "./entities/User"
@@ -56,7 +56,7 @@ function getResponse(func: (req: express.Request) => any): express.RequestHandle
   }
 }
 
-export async function initApp(db: Connection) {
+export async function initApp(db: DataSource) {
   const userRepo = db.getRepository(User)
 
   const app = express()
@@ -95,7 +95,7 @@ export async function initApp(db: Connection) {
 
       const registration = new HandleRegistration()
 
-      let registrationResponse
+      let registrationResponse: Uint8Array
       try {
         registrationResponse = registration.start(regTxArray, encodedServerPrivkey)
       } catch (e) {
@@ -150,7 +150,7 @@ export async function initApp(db: Connection) {
         throw new BadRequest("Invalid registration key")
       }
 
-      const existingUser = await userRepo.findOne({ pubKey: registration.pubKey })
+      const existingUser = await userRepo.findOneBy({ pubKey: registration.pubKey })
 
       if (existingUser && !registration.reset) {
         throw new BadRequest("Wallet already registered. Pass 'reset' do reset password.")
@@ -187,7 +187,7 @@ export async function initApp(db: Connection) {
       const credentialRequestArray = new Uint8Array(credentialRequest)
 
       // TODO: Return bogus answer is user is not registered
-      const existingUser = await userRepo.findOne({ pubKey })
+      const existingUser = await userRepo.findOneBy({ pubKey })
       if (!existingUser || !existingUser.passwordFile) {
         throw new NotFound("User not found")
       }
@@ -233,9 +233,9 @@ export async function initApp(db: Connection) {
         throw new BadRequest("Invalid login key")
       }
 
-      console.log(sessionKey)
+      // console.debug(sessionKey)
 
-      const user = await userRepo.findOne({ pubKey: login.pubKey })
+      const user = await userRepo.findOneBy({ pubKey: login.pubKey })
       if (!user) {
         throw new NotFound("User does not exist")
       }
