@@ -1,6 +1,7 @@
 import { HandleRegistration, HandleLogin } from "../opaque-wasm"
 import { DataSource } from "typeorm"
 import { BadRequest, Unauthorized, Forbidden, NotFound } from "./errors"
+import { getPubKeyHashId } from "./utils"
 
 import { User } from "./entities/User"
 
@@ -30,7 +31,7 @@ const registrationRequests: {
 const loginRequests: {
   [hexPath: string]: {
     login: HandleLogin
-    pubKey: string
+    pubKeyHashId: string
   }
 } = {}
 
@@ -150,7 +151,9 @@ export async function initApp(db: DataSource) {
         throw new BadRequest("Invalid registration key")
       }
 
-      const existingUser = await userRepo.findOneBy({ pubKey: registration.pubKey })
+      const pubKeyHashId = getPubKeyHashId(publicKey)
+
+      const existingUser = await userRepo.findOneBy({ pubKeyHashId })
 
       if (existingUser && !registration.reset) {
         throw new BadRequest("Wallet already registered. Pass 'reset' do reset password.")
@@ -158,6 +161,7 @@ export async function initApp(db: DataSource) {
 
       const userSave = existingUser ? existingUser : new User()
 
+      userSave.pubKeyHashId = pubKeyHashId
       userSave.passwordFile = Array.from(passwordFile)
       userSave.wallet = registration.wallet
       userSave.salt = registration.salt
@@ -174,11 +178,11 @@ export async function initApp(db: DataSource) {
   app.post(
     "/login",
     getResponse(async req => {
-      const pubKey = req.body.pubKey
+      const pubKeyHashId = req.body.pubKeyHashId
       const credentialRequest = req.body.request
 
-      if (typeof pubKey !== "string") {
-        throw new BadRequest("Must be a valid public key")
+      if (typeof pubKeyHashId !== "string") {
+        throw new BadRequest("Must be a valid user id")
       }
 
       if (!credentialRequest || !Array.isArray(credentialRequest)) {
@@ -187,7 +191,7 @@ export async function initApp(db: DataSource) {
       const credentialRequestArray = new Uint8Array(credentialRequest)
 
       // TODO: Return bogus answer is user is not registered
-      const existingUser = await userRepo.findOneBy({ pubKey })
+      const existingUser = await userRepo.findOneBy({ pubKeyHashId })
       if (!existingUser || !existingUser.passwordFile) {
         throw new NotFound("User not found")
       }
@@ -209,7 +213,7 @@ export async function initApp(db: DataSource) {
 
       loginRequests[hexPath] = {
         login,
-        pubKey
+        pubKeyHashId
       }
 
       return { key: responseArray }
@@ -235,7 +239,7 @@ export async function initApp(db: DataSource) {
 
       // console.debug(sessionKey)
 
-      const user = await userRepo.findOneBy({ pubKey: login.pubKey })
+      const user = await userRepo.findOneBy({ pubKeyHashId: login.pubKeyHashId })
       if (!user) {
         throw new NotFound("User does not exist")
       }
