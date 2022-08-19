@@ -169,6 +169,12 @@ export async function initApp(db: DataSource) {
 
       await userRepo.save(userSave)
 
+      if (existingUser) {
+        console.log(`Reset password for user ${registration.pubKey}`)
+      } else {
+        console.log(`Saved new user ${registration.pubKey}`)
+      }
+
       delete registrationRequests[req.params.key]
 
       return { success: true }
